@@ -1,0 +1,9 @@
+{
+    "path" : "~/GitHub/Expense-Tracker",
+    "sortOrder" : [
+        {
+            "ascending" : true,
+            "columnIndex" : 2
+        }
+    ]
+}

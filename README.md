@@ -8,7 +8,7 @@ Passwords are stored as hashed text in a database along with user expenses and s
 - User Authentication, create an account with a username and password (no password reset)
 - Track expenses and savings in different currencies (currently USD and EUR)
 - See total and weekly net cash available based on user-defined cycle
-- customizeable interface themes
+- Customizeable interface themes
 
 ## Improvements (To Do)
 - Analytics and aggregate spending tables/plots in Overview tab

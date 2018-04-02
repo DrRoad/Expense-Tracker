@@ -104,6 +104,23 @@ DB_add_user <- function(usr, hsh){
   
 }
 
+DB_remove_records <- function(usr, ids){
+  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
+  
+  if(usr %in% dbListTables(db)){
+    df <- dbReadTable(db, usr)
+    q <- paste("DELETE FROM", usr, "WHERE id IN", paste0("(", paste(ids, collapse = ","), ")") )
+    print(paste("- Query:", q))
+  
+    dbSendStatement(db, q)
+    print("- Transactions removed.")
+  } else {
+    print("- User's transaction table does not exist")
+  }
+  
+  dbDisconnect(db)
+}
+
 DB_add_record <- function(usr, dt, clss, amt, curr, cnv_amt, cnv_curr, rate, ctgry, cmnts){
   db <- dbConnect(RSQLite::SQLite(), DB_NAME)
   
@@ -124,7 +141,7 @@ DB_add_record <- function(usr, dt, clss, amt, curr, cnv_amt, cnv_curr, rate, ctg
     dbSendQuery(db, q)
     print("- Record added")
   } else {
-    print("- User's expense table does not exist")
+    print("- User's transaction table does not exist")
   }
   
   dbDisconnect(db)
@@ -134,6 +151,33 @@ DB_add_expense <- function(usr, dt, amt, curr, cnv_amt, cnv_curr, rate, ctgry, c
 }
 DB_add_deposit <- function(usr, dt, amt, curr, cnv_amt, cnv_curr, rate, ctgry, cmnts){
   DB_add_record(usr = usr, dt = dt, clss = "Deposit", amt = amt, curr = curr, cnv_amt = cnv_amt, cnv_curr = cnv_curr, rate = rate, ctgry = ctgry, cmnts = cmnts)
+}
+
+DB_modify_record <- function(usr, id, dt, clss, amt, curr, cnv_amt, cnv_curr, rate, ctgry, cmnts){
+  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
+  
+  if(usr %in% dbListTables(db)){
+    
+    q <- paste("UPDATE", usr, 
+               paste("SET ",
+                     "date = '", dt,"', ",
+                     "class = '", clss,"', ",
+                     "amount = ", amt,", ",
+                     "currency = '", curr,"', ",
+                     "conv_amount = ", cnv_amt,", ",
+                     "conv_currency = '", cnv_curr,"', ",
+                     "fx_rate = ", rate,", ",
+                     "category = '", ctgry,"', ",
+                     "comments = '", cmnts,"'", sep=""),
+               "WHERE id =", id)
+    print(paste("- Query:", q))
+    dbSendStatement(db, q)
+    print("- Transaction Updated")
+  } else {
+    print("- User's transaction table does not exist")
+  }
+  
+  dbDisconnect(db)
 }
 
 DB_get_records <- function(usr, clss = NULL, ID = NULL, ctgry = NULL){
@@ -272,6 +316,9 @@ get_overview_plot <- function(df, start_date, end_date){
 
 # Server ------------------------------------------------------------------
 
+#Global DT options
+options(DT.options = list(autoWidth = TRUE))
+
 shinyServer(function(input, output, session) {
   
   # User App Information
@@ -285,7 +332,7 @@ shinyServer(function(input, output, session) {
   user.fx_currency <- reactiveVal(value = "EUR")
   user.categories <- reactiveVal(value = NULL)
   
-  # User App Events
+  ### User App Events
   logout <- function(){
     user(NULL)
     loggedIn(FALSE)
@@ -296,7 +343,7 @@ shinyServer(function(input, output, session) {
     #user.base_currency(NULL)
     #user.base_currency(NULL)
     user.categories(NULL)
-    set_ui(NULL)
+    set_ui("basic")
     print("- User: logged out")
   }                                   # Logout function 
   set_ui <- function(s){
@@ -408,6 +455,7 @@ shinyServer(function(input, output, session) {
       need( !(tolower(input$settings.new_category_name) %in% sapply(user.categories(), tolower)), message = "Category already exists" )
       )
     user.categories(c(user.categories(), input$settings.new_category_name))
+    updateTextInput(session, inputId = "settings.new_category_name", label = "Enter New Category", value = "")
   })            # Add Expense/Deposit Category
   observe({
     req(input$tabs)
@@ -415,6 +463,47 @@ shinyServer(function(input, output, session) {
       logout()
     }
   })                                              # Logout observer
+  
+  # Display-Modal Events
+  observeEvent(input$expense.add, {
+    showModal(modal.expense_entry())
+  })                      # "Add Expense" Dialogue
+  observeEvent(input$savings.add, {
+    showModal(modal.savings_entry())
+  })                      # "Add Savings" Dialogue
+  observeEvent(input$expense.delete, {
+    showModal(modal.expense_remove())
+  })                   # "Delete Expense" Dialogue
+  observeEvent(input$expense.delete_confirm, {
+    DB_remove_records(usr = input$username, ids = exp_tbl_last_selected()$id)
+    removeModal()
+  })           # Confirm and remove Expenses
+  observeEvent(input$savings.delete, {
+    showModal(modal.savings_remove())
+  })                   # "Delete Savings" Dialogue
+  observeEvent(input$savings.delete_confirm, {
+    DB_remove_records(usr = input$username, ids = sav_tbl_last_selected()$id)
+    removeModal()
+  })           # Confirm and remove Deposits
+  observeEvent(input$expense.modify, {
+    showModal(modal.expense_edit())
+  })                   # Modify Expense
+  observeEvent(input$savings.modify, {
+    showModal(modal.savings_edit())
+  })                   # Modify Deposity
+  
+  # Global Event Functions
+  update_datatables <- reactive({
+    # List inputs to trigger updates
+    input$expense_entry.add
+    input$expense_modify.add
+    input$expense.delete_confirm
+    input$savings_entry.add
+    input$savings_modify.add
+    input$savings.delete_confirm
+    new_transactions()
+    return(NULL)
+  })
   
   # App UI ------------------------------------------------------------
   observe({
@@ -464,65 +553,30 @@ shinyServer(function(input, output, session) {
                      # Expenses Tab ------------------------------------------------------------
                      tabPanel( title = "Expenses", icon = icon("credit-card"), 
                                fluidRow(
-                                 column(7,
+                                 column(12,
                                         h4("Expense History", align = "center"),
-                                        DT::dataTableOutput("expense.history_table")
-                                 )#,
-                                 # column(3,
-                                 #        h4("Add Expense", align = "center"),
-                                 #        hr(),
-                                 #        fluidRow(
-                                 #          column(5, selectInput(inputId = "expense_entry.currency", label = "Currency", 
-                                 #                                choices = c("USD", "EUR"), selected = "USD", multiple = FALSE)),
-                                 #          column(7, numericInput(inputId = "expense_entry.amount", label = "Amount",
-                                 #                                 value = NULL, min = 0))
-                                 #        ),
-                                 #        fluidRow(
-                                 #          column(5, dateInput(inputId = "expense_entry.date", label = "Date", max = today(),
-                                 #                              value = today(), weekstart = 1)),
-                                 #          column(7, selectInput(inputId = "expense_entry.category", label = "Category", choices = user.categories(), multiple = FALSE))
-                                 #        ),
-                                 #        fluidRow(
-                                 #          column(12,
-                                 #                 textAreaInput(inputId = "expense_entry.comment", label = "Comments", resize = "vertical"),
-                                 #                 hr(),
-                                 #                 actionButton(inputId = "expense_entry.add", label = "Submit"),
-                                 #                 hr(),
-                                 #                 textOutput(outputId = "expense_entry.status")
-                                 #          )
-                                 #        )
-                                 # )
+                                        hr(),
+                                        column(6, offset = 3,
+                                               actionButton(inputId = "expense.add", label = "Add Expense", width = '30%'),
+                                               actionButton(inputId = "expense.delete", label = "Delete Selected", width = '30%'),
+                                               actionButton(inputId = "expense.modify", label = "Modify Selected", width = '30%')
+                                        ),
+                                        dataTableOutput("expense.history_table")
+                                 )
                                )
                      ),
                      # Savings Tab ------------------------------------------------------------
                      tabPanel( title = "Savings", icon = icon("usd"), 
                                fluidRow(
-                                 column(7,
+                                 column(12,
                                         h4("Savings History", align = "center"),
-                                        dataTableOutput("savings.history_table")
-                                 ),
-                                 column(3,
-                                        h4("Add Deposit/Withdrawal", align = "center"),
                                         hr(),
-                                        fluidRow(
-                                          column(5, textOutput("user.base_currency")),
-                                          column(7, numericInput(inputId = "savings_entry.amount", label = "Amount",
-                                                                 value = 0, min = 0))
+                                        column(6, offset = 3,
+                                               actionButton(inputId = "savings.add", label = "Add Deposit", width = '30%'),
+                                               actionButton(inputId = "savings.delete", label = "Delete Selected", width = '30%'),
+                                               actionButton(inputId = "savings.modify", label = "Modify Selected",  width = '30%')
                                         ),
-                                        fluidRow(
-                                          column(5, dateInput(inputId = "savings_entry.date", label = "Date", max = today(),
-                                                              value = today(), weekstart = 1)),
-                                          column(7, selectInput(inputId = "savings_entry.category", label = "Category", choices = user.categories(), multiple = FALSE))
-                                        ),
-                                        fluidRow(
-                                          column(12,
-                                                 textAreaInput(inputId = "savings_entry.comment", label = "Comments", resize = "vertical"),
-                                                 hr(),
-                                                 actionButton(inputId = "savings_entry.add", label = "Submit"),
-                                                 hr(),
-                                                 textOutput(outputId = "savings_entry.status")
-                                          )
-                                        )
+                                        dataTableOutput("savings.history_table")
                                  )
                                )   
                      ),
@@ -576,7 +630,6 @@ shinyServer(function(input, output, session) {
           )
       })
     } else {
-      
       # Login Page --------------------------------------------------------------
       
       output$App_Panel <- renderUI({
@@ -628,7 +681,7 @@ shinyServer(function(input, output, session) {
   
   ## Overview
   user.net_cash <- reactive({
-    new_transactions()
+    update_datatables()
     df <- DB_get_records(usr = input$username)
     total_expenses <- sum(df[df$class=="Expense", "conv_amount"])
     total_deposits <- sum(df[df$class=="Deposit", "conv_amount"])
@@ -676,28 +729,48 @@ shinyServer(function(input, output, session) {
   
   # Main Panel
   data.expense_table <- reactive({
+    update_datatables()
     validate(
       need(!is.null(cycle_start()), "Add Cycle Dates in Settings"),
       need(!is.null(cycle_end()), "Add Cycle Dates in Settings"),
       need(nrow(DB_get_expense(user())) > 0, "No Expenses Recorded")
     )
-    new_transactions()
     input$expense_entry.add
     summarise_expenses(start_date = cycle_start(), end_date = cycle_end(), expense_tbl = DB_get_expense(user()))
   })
   plot.overview <- reactive({
     input$expense_entry.add
+    #selected_rows <- input$data.expense_table_rows_selected
     get_overview_plot(df = data.expense_table(), start_date = cycle_start(), end_date = cycle_end())
   })
   
   output$overview.expense_table <- renderDataTable({
-    data.expense_table()
+    datatable(data.expense_table(), rownames = FALSE) %>%
+      formatCurrency(colnames(data.expense_table())[-1], currency = "$", digits = 2) %>%
+      formatStyle("total", backgroundColor = "lightgray")
   })
   output$overview.historical_spending <- renderPlotly({
     plot.overview()[[input$overview.plot_type]]
   })
   
+  observe({
+    print(paste("Selected Rows:", input$expense.history_table_rows_selected, collapse = ",", sep = " "))
+    print(paste("Last Selected:", input$expense.history_table_row_last_clicked))
+  })
+  
   ## Expenses
+  exp_tbl <- reactive({
+    update_datatables()
+    DB_get_expense(usr = input$username)
+  })
+  exp_tbl_selected <- reactive({
+    selected_rows <- input$expense.history_table_rows_selected
+    exp_tbl()[selected_rows,]
+  })
+  exp_tbl_last_selected <- reactive({
+    selected_rows <- input$expense.history_table_row_last_clicked
+    exp_tbl()[selected_rows,]
+  })
   output$expense_entry.status <- eventReactive(input$expense_entry.add, {
     validate(
       need(input$expense_entry.amount, "Missing 'Amount' input"),
@@ -719,14 +792,78 @@ shinyServer(function(input, output, session) {
                    ctgry = input$expense_entry.category, cmnts = input$expense_entry.comment)
     
     return("Expense added")
+  })
+  output$expense_modify.status <- eventReactive(input$expense_modify.add, {
+    validate(
+      need(input$expense_modify.amount, "Missing 'Amount' input"),
+      need(input$expense_modify.category, "Missing 'Category' input"),
+      need(input$expense_modify.comment, "Missing 'Comments' input"),
+      need(input$expense_modify.amount > 0, "'Amount' should be positive")
+    )
     
+    if(input$expense_modify.currency == "USD"){
+      conversion_factor <- 1
+    } else {
+      conversion_factor <- get_FX_rate(as_date(input$expense_modify.date))
+    }
+    
+    converted_amt <- conversion_factor * input$expense_modify.amount
+    
+    DB_modify_record(usr = input$username, 
+                   id = input$expense.history_table_row_last_clicked, 
+                   dt = input$expense_modify.date, 
+                   clss = "Expense",
+                   amt = input$expense_modify.amount, 
+                   curr = input$expense_modify.currency, 
+                   cnv_amt = converted_amt, 
+                   cnv_curr = "USD", 
+                   rate = conversion_factor, 
+                   ctgry = input$expense_modify.category, 
+                   cmnts = input$expense_modify.comment)
+    
+    return("Expense Updated ")
   })
   output$expense.history_table <- renderDataTable({
-    input$expense_entry.add
-    DB_get_expense(usr = input$username)
+    datatable(exp_tbl(), rownames = FALSE, 
+              options=list(columnDefs = list(list(visible=FALSE, targets= c(2))),
+                           order = list(list(0, 'desc')))) %>% 
+      formatDate("date") %>%
+      formatRound(c("amount", "conv_amount"), digits = 2) %>%
+      formatRound("fx_rate", digits = 4) %>%
+      formatCurrency("conv_amount")
     })
+  output$expense.history_table_selected <- renderDataTable({
+    datatable(exp_tbl_last_selected(), rownames = FALSE, 
+              options=list(columnDefs = list(list(visible=FALSE, targets= c(0,2))),
+                           order = list(list(0, 'desc')))) %>% 
+      formatDate("date") %>%
+      formatRound(c("amount", "conv_amount"), digits = 2) %>%
+      formatRound("fx_rate", digits = 4) %>%
+      formatCurrency("conv_amount")
+  })
+  output$expense.history_table_last_selected <- renderDataTable({
+    datatable(exp_tbl_last_selected(), rownames = FALSE, 
+              options=list(columnDefs = list(list(visible=FALSE, targets= c(0,2))),
+                           order = list(list(0, 'desc')))) %>% 
+      formatDate("date") %>%
+      formatRound(c("amount", "conv_amount"), digits = 2) %>%
+      formatRound("fx_rate", digits = 4) %>%
+      formatCurrency("conv_amount")
+  })
   
   ## Savings
+  sav_tbl <- reactive({
+    update_datatables()
+    DB_get_deposit(usr = input$username)
+  })
+  sav_tbl_selected <- reactive({
+    selected_rows <- input$savings.history_table_rows_selected
+    sav_tbl()[selected_rows,]
+  })
+  sav_tbl_last_selected <- reactive({
+    selected_rows <- input$savings.history_table_row_last_clicked
+    sav_tbl()[selected_rows,]
+  })
   output$savings_entry.status <- eventReactive(input$savings_entry.add, {
     validate(
       need(input$savings_entry.amount, "Missing 'Amount' input"),
@@ -741,10 +878,51 @@ shinyServer(function(input, output, session) {
     
     return("Entry added")
   })
+  output$savings_modify.status <- eventReactive(input$savings_modify.add, {
+    validate(
+      need(input$savings_modify.amount, "Missing 'Amount' input"),
+      need(input$savings_modify.category, "Missing 'Category' input"),
+      need(input$savings_modify.comment, "Missing 'Comments' input"),
+      need(input$savings_modify.amount > 0, "'Amount' should be positive")
+    )
+    
+    DB_modify_record(usr = input$username, 
+                   id = input$savings.history_table_row_last_clicked,  
+                   dt = input$savings_modify.date, 
+                   clss = "Deposit",
+                   amt = input$savings_modify.amount, 
+                   curr = "USD", 
+                   cnv_amt = input$savings_modify.amount, 
+                   cnv_curr = "USD", rate = 1, 
+                   ctgry = input$savings_modify.category, 
+                   cmnts = input$savings_modify.comment)
+    
+    return("Deposit Updated")
+  })
   output$savings.history_table <- renderDataTable({
-    input$savings_entry.add
-    DB_get_deposit(usr = input$username)
+    datatable(sav_tbl(), rownames = FALSE, 
+              options=list(columnDefs = list(list(visible=FALSE, targets= c(2) )))) %>% 
+      formatDate("date") %>%
+      formatRound(c("amount", "conv_amount"), digits = 2) %>%
+      formatRound("fx_rate", digits = 4) %>%
+      formatCurrency("conv_amount")
     })
+  output$savings.history_table_selected <- renderDataTable({
+    datatable(sav_tbl_selected(), rownames = FALSE, 
+              options=list(columnDefs = list(list(visible=FALSE, targets= c(0,2) )))) %>% 
+      formatDate("date") %>%
+      formatRound(c("amount", "conv_amount"), digits = 2) %>%
+      formatRound("fx_rate", digits = 4) %>%
+      formatCurrency("conv_amount")
+  })
+  output$savings.history_table_last_selected <- renderDataTable({
+    datatable(sav_tbl_last_selected(), rownames = FALSE, 
+              options=list(columnDefs = list(list(visible=FALSE, targets= c(0,2) )))) %>% 
+      formatDate("date") %>%
+      formatRound(c("amount", "conv_amount"), digits = 2) %>%
+      formatRound("fx_rate", digits = 4) %>%
+      formatCurrency("conv_amount")
+  })
   
   ## Menu
   output$settings.current_categories <- renderText({
@@ -829,11 +1007,150 @@ shinyServer(function(input, output, session) {
     
     DB_upload_df(df, tblname = user()) #Upload data
     
-    "Success"
+    return("Success")
     
-  })
+  }) # Handles data uploaded via .CSV
   output$settings.upload.new_records_status <- renderText({new_transactions()})
+  
+  # Modals ------------------------------------------------------------------
+  modal.expense_entry <- reactive({
+    modalDialog(title = "Add Expense", size = "l", easyClose = T,
+                fluidPage(
+                  fluidRow(
+                    column(5, selectInput(inputId = "expense_entry.currency", label = "Currency",
+                                          choices = c("USD", "EUR"), selected = "USD", multiple = FALSE)),
+                    column(7, numericInput(inputId = "expense_entry.amount", label = "Amount",
+                                           value = NULL, min = 0))
+                  ),
+                  fluidRow(
+                    column(5, dateInput(inputId = "expense_entry.date", label = "Date", max = today(),
+                                        value = today(), weekstart = 1)),
+                    column(7, selectInput(inputId = "expense_entry.category", label = "Category", choices = user.categories(), multiple = FALSE))
+                  ),
+                  fluidRow(
+                    column(12,
+                           textAreaInput(inputId = "expense_entry.comment", label = "Comments", resize = "vertical"),
+                           hr(),
+                           actionButton(inputId = "expense_entry.add", label = "Submit"),
+                           hr(),
+                           textOutput(outputId = "expense_entry.status")
+                    )
+                  )
+                ))})
+  modal.savings_entry <- reactive({
+    modalDialog(title = "Add Deposit", size = "l", easyClose = T,
+                fluidPage(
+                  h4("Add Deposit", align = "center"),
+                  hr(),
+                  fluidRow(
+                    column(5, textOutput("user.base_currency")),
+                    column(7, numericInput(inputId = "savings_entry.amount", label = "Amount",
+                                           value = 0, min = 0))
+                  ),
+                  fluidRow(
+                    column(5, dateInput(inputId = "savings_entry.date", label = "Date", max = today(),
+                                        value = today(), weekstart = 1)),
+                    column(7, selectInput(inputId = "savings_entry.category", label = "Category", choices = user.categories(), multiple = FALSE))
+                  ),
+                  fluidRow(
+                    column(12,
+                           textAreaInput(inputId = "savings_entry.comment", label = "Comments", resize = "vertical"),
+                           hr(),
+                           actionButton(inputId = "savings_entry.add", label = "Submit"),
+                           hr(),
+                           textOutput(outputId = "savings_entry.status")
+                    )
+                  )
+                )
+    )
+  })
+  modal.expense_remove <- reactive({
+    modalDialog(title = "Delete Selected Expenses", size = "l", easyClose = T,
+                fluidPage(
+                  fluidRow(
+                    dataTableOutput("expense.history_table_selected"),
+                    br(),
+                    strong("Delete these transactions?", style = "color:red"),
+                    actionButton("expense.delete_confirm", "Yes")
+                  )
+                )
+    )
+  })
+  modal.savings_remove <- reactive({
+    modalDialog(title = "Delete Selected Deposits", size = "l", easyClose = T,
+                fluidPage(
+                  fluidRow(
+                    dataTableOutput("savings.history_table_selected"),
+                    br(),
+                    strong("Delete these transactions?", style = "color:red"),
+                    actionButton("savings.delete_confirm", "Yes")
+                  )
+                )
+    )
+  })
+  modal.expense_edit <- reactive({
+    modalDialog(title = "Modify Expense", size = "l", easyClose = T,
+                fluidPage(
+                  fluidRow(
+                    h3("Current Entry:"),
+                    dataTableOutput("expense.history_table_last_selected")
+                  ),
+                  fluidRow(
+                    h3("Modified Entry:"),
+                    column(5, selectInput(inputId = "expense_modify.currency", label = "Currency",
+                                          choices = c("USD", "EUR"), selected = "USD", multiple = FALSE)),
+                    column(5, numericInput(inputId = "expense_modify.amount", label = "Amount",
+                                           value = NULL, min = 0))
+                  ),
+                  fluidRow(
+                    column(5, dateInput(inputId = "expense_modify.date", label = "Date", max = today(),
+                                        value = today(), weekstart = 1)),
+                    column(5, selectInput(inputId = "expense_modify.category", label = "Category", choices = user.categories(), multiple = FALSE))
+                  ),
+                  fluidRow(
+                    column(12,
+                           textAreaInput(inputId = "expense_modify.comment", label = "Comments", resize = "vertical"),
+                           hr(),
+                           actionButton(inputId = "expense_modify.add", label = "Submit"),
+                           hr(),
+                           textOutput(outputId = "expense_modify.status")
+                    )
+                  )
+                ))
+  })
+  modal.savings_edit <- reactive({
+    modalDialog(title = "Modify Deposit", size = "l", easyClose = T,
+                fluidPage(
+                  fluidRow(
+                    h3("Current Entry:"),
+                    dataTableOutput("savings.history_table_last_selected")
+                  ),
+                  fluidRow(
+                    h3("Modified Entry:"),
+                    column(5, selectInput(inputId = "savings_modify.currency", label = "Currency",
+                                          choices = c("USD", "EUR"), selected = "USD", multiple = FALSE)),
+                    column(5, numericInput(inputId = "savings_modify.amount", label = "Amount",
+                                           value = NULL, min = 0))
+                  ),
+                  fluidRow(
+                    column(5, dateInput(inputId = "savings_modify.date", label = "Date", max = today(),
+                                        value = today(), weekstart = 1)),
+                    column(5, selectInput(inputId = "savings_modify.category", label = "Category", choices = user.categories(), multiple = FALSE))
+                  ),
+                  fluidRow(
+                    column(12,
+                           textAreaInput(inputId = "savings_modify.comment", label = "Comments", resize = "vertical"),
+                           hr(),
+                           actionButton(inputId = "savings_modify.add", label = "Submit"),
+                           hr(),
+                           textOutput(outputId = "savings_modify.status")
+                    )
+                  )
+                ))
+  })
 })
+
+
 
 
 

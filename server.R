@@ -497,16 +497,8 @@ shinyServer(function(input, output, session) {
     showModal(modal.savings_edit())
   })                   # Modify Deposity
   
+  
   # Global Event Functions
-  update_tbls <- reactiveVal(value = 0)
-  
-  observeEvent(input$ee.dm, {
-    removeModal()
-    update_tbls() <- update_tbls() + 1
-    })
-  
-  
-  
   update_datatables <- reactive({
     # List inputs to trigger updates
     print(paste(input$expense_entry.add,
@@ -515,8 +507,9 @@ shinyServer(function(input, output, session) {
     input$savings_entry.add,
     input$savings_modify.add,
     input$savings.delete_confirm,
-    new_transactions()))
-    update_tbls(update_tbls() + 1)
+    input$expense.refresh,
+    input$savings.refresh,
+    new_transactions(), sep = "|"))
     
     return(NULL)
   })
@@ -527,7 +520,7 @@ shinyServer(function(input, output, session) {
       output$App_Panel <- renderUI({
           navbarPage(title = "Expense Tracker", id = "tabs", 
                      # Overview Tab ------------------------------------------------------------
-                     tabPanel( title = "Overview", icon = icon("hub"), 
+                     tabPanel( title = "Overview", icon = icon("bar-chart"), 
                                sidebarLayout(
                                  sidebarPanel(width = 3,
                                               fluidRow(
@@ -575,7 +568,8 @@ shinyServer(function(input, output, session) {
                                         column(6, offset = 3,
                                                actionButton(inputId = "expense.add", label = "Add Expense", width = '30%'),
                                                actionButton(inputId = "expense.delete", label = "Delete Selected", width = '30%'),
-                                               actionButton(inputId = "expense.modify", label = "Modify Selected", width = '30%')
+                                               actionButton(inputId = "expense.modify", label = "Modify Selected", width = '30%'),
+                                               actionButton(inputId = "expense.refresh", label = "", icon = icon("refresh"),  width = '8%')
                                         ),
                                         dataTableOutput("expense.history_table")
                                  )
@@ -590,7 +584,8 @@ shinyServer(function(input, output, session) {
                                         column(6, offset = 3,
                                                actionButton(inputId = "savings.add", label = "Add Deposit", width = '30%'),
                                                actionButton(inputId = "savings.delete", label = "Delete Selected", width = '30%'),
-                                               actionButton(inputId = "savings.modify", label = "Modify Selected",  width = '30%')
+                                               actionButton(inputId = "savings.modify", label = "Modify Selected",  width = '30%'),
+                                               actionButton(inputId = "savings.refresh", label = "", icon = icon("refresh"),  width = '8%')
                                         ),
                                         dataTableOutput("savings.history_table")
                                  )

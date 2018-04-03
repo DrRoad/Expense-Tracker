@@ -126,8 +126,10 @@ DB_add_record <- function(usr, dt, clss, amt, curr, cnv_amt, cnv_curr, rate, ctg
   
   if(usr %in% dbListTables(db)){
     df <- dbReadTable(db, usr)
+    id <- max(max(df$id), 0) + 1 #id is one larger than the max of either the largest existing id and 0.
+              
     q <- paste("INSERT INTO", usr, "(id, date, class, amount, currency, conv_amount, conv_currency, fx_rate, category, comments)",
-               "VALUES (", paste("", nrow(df), ",",
+               "VALUES (", paste("", max(df$id)+1, ",",
                                  dt, ",",
                                  clss, ",",
                                  amt, ",",
@@ -256,7 +258,7 @@ DB_test_connect()
 
 # Functions and Presets ---------------------------------------------------------------
 
-THEMES <- c("basic","darkly", "cerulean")
+THEMES <- c("basic","flatly", "lumen", "paper", "united", "yeti", "cerulean")
 
 get_FX_rate <- function(date, currency = "EUR"){
   df <- quantmod::getSymbols(paste(currency,"X", sep="="),src="yahoo",from=date, to=date, env = NULL)
@@ -312,6 +314,9 @@ get_overview_plot <- function(df, start_date, end_date){
     ggtitle("Expenses by Week", paste("For the period", start_date, "to", end_date))
   
   return(list(bar = p1, line = p2))
+}
+init_action_button <- function(btn){
+  if(is.null(btn)){return(0)}else{btn}
 }
 
 # Server ------------------------------------------------------------------
@@ -475,14 +480,14 @@ shinyServer(function(input, output, session) {
     showModal(modal.expense_remove())
   })                   # "Delete Expense" Dialogue
   observeEvent(input$expense.delete_confirm, {
-    DB_remove_records(usr = input$username, ids = exp_tbl_last_selected()$id)
+    DB_remove_records(usr = input$username, ids = exp_tbl_selected()$id)
     removeModal()
   })           # Confirm and remove Expenses
   observeEvent(input$savings.delete, {
     showModal(modal.savings_remove())
   })                   # "Delete Savings" Dialogue
   observeEvent(input$savings.delete_confirm, {
-    DB_remove_records(usr = input$username, ids = sav_tbl_last_selected()$id)
+    DB_remove_records(usr = input$username, ids = sav_tbl_selected()$id)
     removeModal()
   })           # Confirm and remove Deposits
   observeEvent(input$expense.modify, {
@@ -493,15 +498,26 @@ shinyServer(function(input, output, session) {
   })                   # Modify Deposity
   
   # Global Event Functions
+  update_tbls <- reactiveVal(value = 0)
+  
+  observeEvent(input$ee.dm, {
+    removeModal()
+    update_tbls() <- update_tbls() + 1
+    })
+  
+  
+  
   update_datatables <- reactive({
     # List inputs to trigger updates
-    input$expense_entry.add
-    input$expense_modify.add
-    input$expense.delete_confirm
-    input$savings_entry.add
-    input$savings_modify.add
-    input$savings.delete_confirm
-    new_transactions()
+    print(paste(input$expense_entry.add,
+    input$expense_modify.add,
+    input$expense.delete_confirm,
+    input$savings_entry.add,
+    input$savings_modify.add,
+    input$savings.delete_confirm,
+    new_transactions()))
+    update_tbls(update_tbls() + 1)
+    
     return(NULL)
   })
   
@@ -753,11 +769,6 @@ shinyServer(function(input, output, session) {
     plot.overview()[[input$overview.plot_type]]
   })
   
-  observe({
-    print(paste("Selected Rows:", input$expense.history_table_rows_selected, collapse = ",", sep = " "))
-    print(paste("Last Selected:", input$expense.history_table_row_last_clicked))
-  })
-  
   ## Expenses
   exp_tbl <- reactive({
     update_datatables()
@@ -810,7 +821,7 @@ shinyServer(function(input, output, session) {
     converted_amt <- conversion_factor * input$expense_modify.amount
     
     DB_modify_record(usr = input$username, 
-                   id = input$expense.history_table_row_last_clicked, 
+                   id = exp_tbl()[input$expense.history_table_row_last_clicked,"id"], 
                    dt = input$expense_modify.date, 
                    clss = "Expense",
                    amt = input$expense_modify.amount, 
@@ -833,7 +844,7 @@ shinyServer(function(input, output, session) {
       formatCurrency("conv_amount")
     })
   output$expense.history_table_selected <- renderDataTable({
-    datatable(exp_tbl_last_selected(), rownames = FALSE, 
+    datatable(exp_tbl_selected(), rownames = FALSE, 
               options=list(columnDefs = list(list(visible=FALSE, targets= c(0,2))),
                            order = list(list(0, 'desc')))) %>% 
       formatDate("date") %>%
@@ -887,7 +898,7 @@ shinyServer(function(input, output, session) {
     )
     
     DB_modify_record(usr = input$username, 
-                   id = input$savings.history_table_row_last_clicked,  
+                   id = sav_tbl()[input$savings.history_table_row_last_clicked, "id"],  
                    dt = input$savings_modify.date, 
                    clss = "Deposit",
                    amt = input$savings_modify.amount, 
@@ -1014,7 +1025,7 @@ shinyServer(function(input, output, session) {
   
   # Modals ------------------------------------------------------------------
   modal.expense_entry <- reactive({
-    modalDialog(title = "Add Expense", size = "l", easyClose = T,
+    modalDialog(title = "Add Expense", size = "l", easyClose = F, footer = actionButton("ee.dm",label = "Dismiss"),
                 fluidPage(
                   fluidRow(
                     column(5, selectInput(inputId = "expense_entry.currency", label = "Currency",
@@ -1038,7 +1049,7 @@ shinyServer(function(input, output, session) {
                   )
                 ))})
   modal.savings_entry <- reactive({
-    modalDialog(title = "Add Deposit", size = "l", easyClose = T,
+    modalDialog(title = "Add Deposit", size = "l", easyClose = T, #footer = actionButton("se.dm",label = "Dismiss"),
                 fluidPage(
                   h4("Add Deposit", align = "center"),
                   hr(),
@@ -1065,7 +1076,7 @@ shinyServer(function(input, output, session) {
     )
   })
   modal.expense_remove <- reactive({
-    modalDialog(title = "Delete Selected Expenses", size = "l", easyClose = T,
+    modalDialog(title = "Delete Selected Expenses", size = "l", easyClose = T, #footer = actionButton("er.dm",label = "Dismiss"),
                 fluidPage(
                   fluidRow(
                     dataTableOutput("expense.history_table_selected"),
@@ -1077,7 +1088,7 @@ shinyServer(function(input, output, session) {
     )
   })
   modal.savings_remove <- reactive({
-    modalDialog(title = "Delete Selected Deposits", size = "l", easyClose = T,
+    modalDialog(title = "Delete Selected Deposits", size = "l", easyClose = T, #footer = actionButton("sr.dm",label = "Dismiss"),
                 fluidPage(
                   fluidRow(
                     dataTableOutput("savings.history_table_selected"),
@@ -1089,7 +1100,7 @@ shinyServer(function(input, output, session) {
     )
   })
   modal.expense_edit <- reactive({
-    modalDialog(title = "Modify Expense", size = "l", easyClose = T,
+    modalDialog(title = "Modify Expense", size = "l", easyClose = T,# footer = actionButton("eed.dm",label = "Dismiss"),
                 fluidPage(
                   fluidRow(
                     h3("Current Entry:"),
@@ -1098,18 +1109,18 @@ shinyServer(function(input, output, session) {
                   fluidRow(
                     h3("Modified Entry:"),
                     column(5, selectInput(inputId = "expense_modify.currency", label = "Currency",
-                                          choices = c("USD", "EUR"), selected = "USD", multiple = FALSE)),
+                                          choices = c("USD", "EUR"), selected = exp_tbl_last_selected()$currency, multiple = FALSE)),
                     column(5, numericInput(inputId = "expense_modify.amount", label = "Amount",
-                                           value = NULL, min = 0))
+                                           value = exp_tbl_last_selected()$amount, min = 0))
                   ),
                   fluidRow(
                     column(5, dateInput(inputId = "expense_modify.date", label = "Date", max = today(),
-                                        value = today(), weekstart = 1)),
-                    column(5, selectInput(inputId = "expense_modify.category", label = "Category", choices = user.categories(), multiple = FALSE))
+                                        value =  exp_tbl_last_selected()$date, weekstart = 1)),
+                    column(5, selectInput(inputId = "expense_modify.category", label = "Category", choices = user.categories(), selected =  exp_tbl_last_selected()$category, multiple = FALSE))
                   ),
                   fluidRow(
                     column(12,
-                           textAreaInput(inputId = "expense_modify.comment", label = "Comments", resize = "vertical"),
+                           textAreaInput(inputId = "expense_modify.comment", value =exp_tbl_last_selected()$comments, label = "Comments", resize = "vertical"),
                            hr(),
                            actionButton(inputId = "expense_modify.add", label = "Submit"),
                            hr(),
@@ -1119,7 +1130,7 @@ shinyServer(function(input, output, session) {
                 ))
   })
   modal.savings_edit <- reactive({
-    modalDialog(title = "Modify Deposit", size = "l", easyClose = T,
+    modalDialog(title = "Modify Deposit", size = "l", easyClose = T, #footer = actionButton("sed.dm",label = "Dismiss"),
                 fluidPage(
                   fluidRow(
                     h3("Current Entry:"),
@@ -1128,18 +1139,18 @@ shinyServer(function(input, output, session) {
                   fluidRow(
                     h3("Modified Entry:"),
                     column(5, selectInput(inputId = "savings_modify.currency", label = "Currency",
-                                          choices = c("USD", "EUR"), selected = "USD", multiple = FALSE)),
+                                          choices = c("USD", "EUR"), selected =  sav_tbl_last_selected()$currency, multiple = FALSE)),
                     column(5, numericInput(inputId = "savings_modify.amount", label = "Amount",
-                                           value = NULL, min = 0))
+                                           value = sav_tbl_last_selected()$amount, min = 0))
                   ),
                   fluidRow(
                     column(5, dateInput(inputId = "savings_modify.date", label = "Date", max = today(),
-                                        value = today(), weekstart = 1)),
-                    column(5, selectInput(inputId = "savings_modify.category", label = "Category", choices = user.categories(), multiple = FALSE))
+                                        value = sav_tbl_last_selected()$date, weekstart = 1)),
+                    column(5, selectInput(inputId = "savings_modify.category", label = "Category", selected = sav_tbl_last_selected()$category, choices = user.categories(), multiple = FALSE))
                   ),
                   fluidRow(
                     column(12,
-                           textAreaInput(inputId = "savings_modify.comment", label = "Comments", resize = "vertical"),
+                           textAreaInput(inputId = "savings_modify.comment", label = "Comments", sav_tbl_last_selected()$comments, resize = "vertical"),
                            hr(),
                            actionButton(inputId = "savings_modify.add", label = "Submit"),
                            hr(),

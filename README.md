@@ -1,6 +1,8 @@
 # Expense-Tracker
 An app for systematically tracking and analyzing basic income and expenses. Particularly useful for tracking expenses in multiple currencies when travelling abroad.
 
+See the app live here: https://borman.shinyapps.io/Expense-Tracker/
+
 ### Disclaimer
 Passwords are stored as hashed text in a database along with user expenses and savings. The database is *not* encrypted.
 

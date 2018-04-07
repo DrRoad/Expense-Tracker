@@ -1,6 +1,7 @@
 
 library(shiny)
-library(DBI)
+#library(DBI)
+library(RMySQL)
 library(data.table)
 library(DT)
 library(dplyr)
@@ -15,11 +16,32 @@ library(ggthemes)
 
 # Database ----------------------------------------------------------------
 
-DB_NAME <- "data.sqlite"
+DB_NAME <- "data"
+
 TBL_USER_DATA <- "users"
 
+DB_get_connection <- function(){
+  dbConnect(MySQL(), 
+            user= DB_USR, 
+            password=DB_PW, 
+            dbname=DB_NAME, 
+            host=DB_HOST, 
+            port = 3306)
+}
+DB_kill_connections <- function () {
+  
+  all_cons <- dbListConnections(MySQL())
+  
+  print(all_cons)
+  
+  for(con in all_cons)
+    +  dbDisconnect(con)
+  
+  print(paste(length(all_cons), " connections killed."))
+  
+}
 DB_test_connect <- function(){
-  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
+  db <- DB_get_connection()#; 
   
   print("#######################")
   print("- Connected to Database")
@@ -34,7 +56,8 @@ DB_test_connect <- function(){
                      cycle_start_date = as_date(character()),
                      theme = character(),
                      stringsAsFactors = FALSE)
-    dbWriteTable(db, TBL_USER_DATA, df)
+    
+    dbWriteTable(db, TBL_USER_DATA, df, row.names = FALSE)
   } 
   
   print("- Table exists.")
@@ -44,32 +67,33 @@ DB_test_connect <- function(){
 }
 
 DB_upload_df <- function(df, tblname){
-  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
+  db <- DB_get_connection(); 
   
-  current_df <- dbReadTable(db, tblname) # Retrieve the current DB
-
+  current_df <- dbReadTable(db, tblname, row.names = FALSE) # Retrieve the current DB
+  
   # Create IDs for new transactions
   if(nrow(current_df) == 0){
     df$id <- 1:nrow(df)
   } else {
-    df$id <- max(current_df$id):(max(current_df$id) + nrow(df))
+    df$id <- max(current_df$id):(max(current_df$id) + nrow(df) - 1)
   }
-  
+  print(sort(colnames(current_df)))
+  print(sort(colnames(df)))
   df <- df[,colnames(current_df)]
   
   print("### Data To Be Added ###")
   print(df)
   
-  dbWriteTable(db, tblname, df, append = TRUE)
+  dbWriteTable(db, tblname, df, append = TRUE, row.names = FALSE)
   
   print("- Data Added")
   dbDisconnect(db)
 }
 
 DB_get_user <- function(user){
-  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
+  db <- DB_get_connection(); 
   
-  users_data <- dbReadTable(db, TBL_USER_DATA)
+  users_data <- dbReadTable(conn = db,name =  TBL_USER_DATA, row.names = NULL)
   
   users_data <- filter(users_data, USER == user)
   
@@ -78,9 +102,9 @@ DB_get_user <- function(user){
   return(users_data)
 }
 DB_add_user <- function(usr, hsh){
-  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
+  db <- DB_get_connection(); 
   
-  df <- dbReadTable(db, TBL_USER_DATA)
+  df <- dbReadTable(db, TBL_USER_DATA, row.names=NULL)
   
   q <- paste("INSERT INTO", TBL_USER_DATA, "(ID, USER, HASH) VALUES (", paste("", nrow(df), ",", usr, ",", hsh, "", sep="'"), ")")
   
@@ -98,20 +122,20 @@ DB_add_user <- function(usr, hsh){
                                    fx_rate = as.numeric(character()),     # FX rate on date
                                    category = character(),                # Category
                                    comments = character()                 # Comments on Expense
-  ))
+  ), row.names= FALSE)
   
   suppressWarnings({dbDisconnect(db)})
   
 }
 
 DB_remove_records <- function(usr, ids){
-  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
+  db <- DB_get_connection(); 
   
   if(usr %in% dbListTables(db)){
-    df <- dbReadTable(db, usr)
+    df <- dbReadTable(db, usr, row.names = NULL)
     q <- paste("DELETE FROM", usr, "WHERE id IN", paste0("(", paste(ids, collapse = ","), ")") )
     print(paste("- Query:", q))
-  
+    
     dbSendStatement(db, q)
     print("- Transactions removed.")
   } else {
@@ -122,14 +146,19 @@ DB_remove_records <- function(usr, ids){
 }
 
 DB_add_record <- function(usr, dt, clss, amt, curr, cnv_amt, cnv_curr, rate, ctgry, cmnts){
-  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
+  db <- DB_get_connection(); 
   
   if(usr %in% dbListTables(db)){
-    df <- dbReadTable(db, usr)
+    df <- dbReadTable(db, usr, row.names = NULL)
+    # if(nrow(df) == 0){
+    #   id <- 1
+    # } else {
+    #   id <- max(df$id) + 1
+    # }
     id <- max(max(df$id), 0) + 1 #id is one larger than the max of either the largest existing id and 0.
-              
+    
     q <- paste("INSERT INTO", usr, "(id, date, class, amount, currency, conv_amount, conv_currency, fx_rate, category, comments)",
-               "VALUES (", paste("", max(df$id)+1, ",",
+               "VALUES (", paste("", id, ",",
                                  dt, ",",
                                  clss, ",",
                                  amt, ",",
@@ -156,7 +185,7 @@ DB_add_deposit <- function(usr, dt, amt, curr, cnv_amt, cnv_curr, rate, ctgry, c
 }
 
 DB_modify_record <- function(usr, id, dt, clss, amt, curr, cnv_amt, cnv_curr, rate, ctgry, cmnts){
-  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
+  db <- DB_get_connection(); 
   
   if(usr %in% dbListTables(db)){
     
@@ -183,17 +212,17 @@ DB_modify_record <- function(usr, id, dt, clss, amt, curr, cnv_amt, cnv_curr, ra
 }
 
 DB_get_records <- function(usr, clss = NULL, ID = NULL, ctgry = NULL){
-  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
+  db <- DB_get_connection(); 
   
   df <- NULL
   
   if(usr %in% dbListTables(db)){
-    df <- dbReadTable(db, usr)
+    df <- dbReadTable(db, usr, row.names = NULL)
     
     if(!is.null(clss)){
       df <- filter(df, class %in% clss)
     }
-  
+    
     if(!is.null(ID)){
       df <- filter(df, id %in% ID)
     }
@@ -217,14 +246,14 @@ DB_get_expense <- function(usr){
 }
 
 DB_update_user_field <- function(usr, hsh, field, value){
-  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
+  db <- DB_get_connection(); 
   
-  df <- dbReadTable(db, TBL_USER_DATA)
+  df <- dbReadTable(db, TBL_USER_DATA, row.names = FALSE)
   
   print(paste("- Attempting to update user field:", field, "with value:", value))
-
+  
   df <- df[df$USER == usr & df$HASH == hsh,]
-
+  
   if(nrow(df) > 0){
     q <- paste("UPDATE", TBL_USER_DATA, "SET", field, paste("= '", value, "' WHERE HASH = '", hsh, "'", " AND USER = '", usr, "'", sep=""))
     print(paste("- Query:", q))
@@ -237,9 +266,9 @@ DB_update_user_field <- function(usr, hsh, field, value){
   dbDisconnect(db)
 }
 DB_get_user_field <- function(usr, hsh, field){
-  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
+  db <- DB_get_connection(); 
   
-  df <- dbReadTable(db, TBL_USER_DATA)
+  df <- dbReadTable(db, TBL_USER_DATA, row.names = FALSE)
   
   df <- filter(df, (USER == usr && hsh == HASH))
   
@@ -458,7 +487,7 @@ shinyServer(function(input, output, session) {
     validate(
       need( !(input$settings.new_category_name %in% user.categories()), message = "Category already exists"),
       need( !(tolower(input$settings.new_category_name) %in% sapply(user.categories(), tolower)), message = "Category already exists" )
-      )
+    )
     user.categories(c(user.categories(), input$settings.new_category_name))
     updateTextInput(session, inputId = "settings.new_category_name", label = "Enter New Category", value = "")
   })            # Add Expense/Deposit Category
@@ -502,14 +531,14 @@ shinyServer(function(input, output, session) {
   update_datatables <- reactive({
     # List inputs to trigger updates
     print(paste(input$expense_entry.add,
-    input$expense_modify.add,
-    input$expense.delete_confirm,
-    input$savings_entry.add,
-    input$savings_modify.add,
-    input$savings.delete_confirm,
-    input$expense.refresh,
-    input$savings.refresh,
-    new_transactions(), sep = "|"))
+                input$expense_modify.add,
+                input$expense.delete_confirm,
+                input$savings_entry.add,
+                input$savings_modify.add,
+                input$savings.delete_confirm,
+                input$expense.refresh,
+                input$savings.refresh,
+                new_transactions(), sep = "|"))
     
     return(NULL)
   })
@@ -518,152 +547,152 @@ shinyServer(function(input, output, session) {
   observe({
     if(loggedIn()){
       output$App_Panel <- renderUI({
-          navbarPage(title = "Expense Tracker", id = "tabs", 
-                     # Overview Tab ------------------------------------------------------------
-                     tabPanel( title = "Overview", icon = icon("bar-chart"), 
-                               sidebarLayout(
-                                 sidebarPanel(width = 3,
-                                              fluidRow(
-                                                h4("Net Cash Available:", align = "center"),
-                                                strong(textOutput("user.net_cash"), align = "center")), hr(),
-                                              fluidRow(
-                                                h4("Cycle Start:", align = "center"),
-                                                strong(textOutput("user.cycle_start"), align = "center")), hr(),
-                                              fluidRow(
-                                                h4("Cycle End:", align = "center"),
-                                                strong(textOutput("user.cycle_end"), align = "center")), hr(),
-                                              fluidRow(
-                                                h4("Weeks Remaining in Cycle:", align = "center"),
-                                                strong(textOutput("user.weeks_remaining"), align = "center")), hr(),
-                                              fluidRow(
-                                                h4("Net Cash per Week in Cycle:", align = "center"),
-                                                strong(textOutput("user.weekly_net_cash"), align = "center")), hr(),
-                                              fluidRow(
-                                                h4("Foreign Net Cash per Week in Cycle:", align = "center"),
-                                                strong(textOutput("user.weekly_net_fx"), align = "center"))
+        navbarPage(title = "Expense Tracker", id = "tabs", 
+                   # Overview Tab ------------------------------------------------------------
+                   tabPanel( title = "Overview", icon = icon("bar-chart"), 
+                             sidebarLayout(
+                               sidebarPanel(width = 3,
+                                            fluidRow(
+                                              h4("Net Cash Available:", align = "center"),
+                                              strong(textOutput("user.net_cash"), align = "center")), hr(),
+                                            fluidRow(
+                                              h4("Cycle Start:", align = "center"),
+                                              strong(textOutput("user.cycle_start"), align = "center")), hr(),
+                                            fluidRow(
+                                              h4("Cycle End:", align = "center"),
+                                              strong(textOutput("user.cycle_end"), align = "center")), hr(),
+                                            fluidRow(
+                                              h4("Weeks Remaining in Cycle:", align = "center"),
+                                              strong(textOutput("user.weeks_remaining"), align = "center")), hr(),
+                                            fluidRow(
+                                              h4("Net Cash per Week in Cycle:", align = "center"),
+                                              strong(textOutput("user.weekly_net_cash"), align = "center")), hr(),
+                                            fluidRow(
+                                              h4("Foreign Net Cash per Week in Cycle:", align = "center"),
+                                              strong(textOutput("user.weekly_net_fx"), align = "center"))
+                               ),
+                               mainPanel(
+                                 column(width = 12,
+                                        h4("Historical Spending"),
+                                        plotlyOutput("overview.historical_spending"),
+                                        br(),
+                                        column(4, offset = 4,
+                                               selectInput("overview.plot_type", label = "Plot Type", choices = c("bar","line"), multiple = FALSE, width = "100%")
+                                        )
                                  ),
-                                 mainPanel(
-                                   column(width = 12,
-                                          h4("Historical Spending"),
-                                          plotlyOutput("overview.historical_spending"),
-                                          br(),
-                                          column(4, offset = 4,
-                                                 selectInput("overview.plot_type", label = "Plot Type", choices = c("bar","line"), multiple = FALSE, width = "100%")
-                                                 )
-                                          ),
-                                   column(width = 12,
-                                          hr(),
-                                          h4("Expense Record"),
-                                          dataTableOutput("overview.expense_table")
-                                   )
+                                 column(width = 12,
+                                        hr(),
+                                        h4("Expense Record"),
+                                        dataTableOutput("overview.expense_table")
                                  )
                                )
-                     ),
-                     # Expenses Tab ------------------------------------------------------------
-                     tabPanel( title = "Expenses", icon = icon("credit-card"), 
-                               fluidRow(
-                                 column(12,
-                                        h4("Expense History", align = "center"),
-                                        hr(),
-                                        column(6, offset = 3,
-                                               actionButton(inputId = "expense.add", label = "Add Expense", width = '30%'),
-                                               actionButton(inputId = "expense.delete", label = "Delete Selected", width = '30%'),
-                                               actionButton(inputId = "expense.modify", label = "Modify Selected", width = '30%'),
-                                               actionButton(inputId = "expense.refresh", label = "", icon = icon("refresh"),  width = '8%')
-                                        ),
-                                        dataTableOutput("expense.history_table")
-                                 )
+                             )
+                   ),
+                   # Expenses Tab ------------------------------------------------------------
+                   tabPanel( title = "Expenses", icon = icon("credit-card"), 
+                             fluidRow(
+                               column(12,
+                                      h4("Expense History", align = "center"),
+                                      hr(),
+                                      column(6, offset = 3,
+                                             actionButton(inputId = "expense.add", label = "Add Expense", width = '30%'),
+                                             actionButton(inputId = "expense.delete", label = "Delete Selected", width = '30%'),
+                                             actionButton(inputId = "expense.modify", label = "Modify Selected", width = '30%'),
+                                             actionButton(inputId = "expense.refresh", label = "", icon = icon("refresh"),  width = '8%')
+                                      ),
+                                      dataTableOutput("expense.history_table")
                                )
-                     ),
-                     # Savings Tab ------------------------------------------------------------
-                     tabPanel( title = "Savings", icon = icon("usd"), 
-                               fluidRow(
-                                 column(12,
-                                        h4("Savings History", align = "center"),
-                                        hr(),
-                                        column(6, offset = 3,
-                                               actionButton(inputId = "savings.add", label = "Add Deposit", width = '30%'),
-                                               actionButton(inputId = "savings.delete", label = "Delete Selected", width = '30%'),
-                                               actionButton(inputId = "savings.modify", label = "Modify Selected",  width = '30%'),
-                                               actionButton(inputId = "savings.refresh", label = "", icon = icon("refresh"),  width = '8%')
-                                        ),
-                                        dataTableOutput("savings.history_table")
-                                 )
-                               )   
-                     ),
-                     # Menu Tabs ------------------------------------------------------------
-                     navbarMenu( title = paste("Logged in as", user()), 
-                                 tabPanel(title = "Logout", icon = icon("sign-out"), value = "Logout",
-                                          p("logging out")
-                                 ) ,
-                                 tabPanel(title = "Settings", icon = icon("wrench"),
-                                          column(4,
-                                                 wellPanel(
-                                                   h3("Main App Settings"),
-                                                   hr(),
-                                                   h4(paste("Current Cycle Start:", cycle_start() )),
-                                                   h4(paste("Current Cycle End:", cycle_end() )),
-                                                   hr(),
-                                                   dateInput(inputId = "settings.cycle_start", label = "Update Cycle Start Date", value = cycle_start(), max = today(), weekstart = 1),
-                                                   dateInput(inputId = "settings.cycle_end", label = "Update Cycle End Date", value = cycle_end(), min = today(), weekstart = 1),
-                                                   selectInput(inputId = "settings.theme", label = "Theme", choices = THEMES, selected = NULL, multiple = FALSE),
-                                                   p("Theme changes will take effect upon reloading the app"),
-                                                   actionButton(inputId = "settings.update", label = "Update")
-                                                 )),
-                                          column(4,
-                                                 wellPanel(
-                                                   h3("Add Expense/Deposit Category"), 
-                                                   hr(),
-                                                   textOutput(outputId = "settings.current_categories"),
-                                                   textInput(inputId = "settings.new_category_name", label = "Enter New Category"),
-                                                   p("Categories must be added one at a time. If a new expense/deposit is not recorded, the category will not be remembered."),
-                                                   actionButton(inputId = "settings.add_category", label = "Add Category")
-                                                 )),
-                                          column(4,
-                                                 wellPanel(
-                                                   h3("Download Database Records"),
-                                                   hr(),
-                                                   downloadButton(outputId = "settings.DL.all_records", label = "All Records"),
-                                                   downloadButton(outputId = "settings.DL.expenses", label = "Expenses"),
-                                                   downloadButton(outputId = "settings.DL.deposits", label = "Deposits")
-                                                 ),
-                                                 wellPanel(
-                                                   h3("Upload to Database Records"),
-                                                   hr(),
-                                                   p("Download the template below to format your data to upload"),
-                                                   downloadButton(outputId = "settings.DL.upload_template", label = "Template"),
-                                                   hr(),
-                                                   fileInput("settings.upload.new_records", label = "Upload (from template)", multiple = FALSE),
-                                                   textOutput("settings.upload.new_records_status")
-                                                 ))
-                                 )
-                     ), theme = ui_theme()
-          )
+                             )
+                   ),
+                   # Savings Tab ------------------------------------------------------------
+                   tabPanel( title = "Savings", icon = icon("usd"), 
+                             fluidRow(
+                               column(12,
+                                      h4("Savings History", align = "center"),
+                                      hr(),
+                                      column(6, offset = 3,
+                                             actionButton(inputId = "savings.add", label = "Add Deposit", width = '30%'),
+                                             actionButton(inputId = "savings.delete", label = "Delete Selected", width = '30%'),
+                                             actionButton(inputId = "savings.modify", label = "Modify Selected",  width = '30%'),
+                                             actionButton(inputId = "savings.refresh", label = "", icon = icon("refresh"),  width = '8%')
+                                      ),
+                                      dataTableOutput("savings.history_table")
+                               )
+                             )   
+                   ),
+                   # Menu Tabs ------------------------------------------------------------
+                   navbarMenu( title = paste("Logged in as", user()), 
+                               tabPanel(title = "Logout", icon = icon("sign-out"), value = "Logout",
+                                        p("logging out")
+                               ) ,
+                               tabPanel(title = "Settings", icon = icon("wrench"),
+                                        column(4,
+                                               wellPanel(
+                                                 h3("Main App Settings"),
+                                                 hr(),
+                                                 h4(paste("Current Cycle Start:", cycle_start() )),
+                                                 h4(paste("Current Cycle End:", cycle_end() )),
+                                                 hr(),
+                                                 dateInput(inputId = "settings.cycle_start", label = "Update Cycle Start Date", value = cycle_start(), max = today(), weekstart = 1),
+                                                 dateInput(inputId = "settings.cycle_end", label = "Update Cycle End Date", value = cycle_end(), min = today(), weekstart = 1),
+                                                 selectInput(inputId = "settings.theme", label = "Theme", choices = THEMES, selected = NULL, multiple = FALSE),
+                                                 p("Theme changes will take effect upon reloading the app"),
+                                                 actionButton(inputId = "settings.update", label = "Update")
+                                               )),
+                                        column(4,
+                                               wellPanel(
+                                                 h3("Add Expense/Deposit Category"), 
+                                                 hr(),
+                                                 textOutput(outputId = "settings.current_categories"),
+                                                 textInput(inputId = "settings.new_category_name", label = "Enter New Category"),
+                                                 p("Categories must be added one at a time. If a new expense/deposit is not recorded, the category will not be remembered."),
+                                                 actionButton(inputId = "settings.add_category", label = "Add Category")
+                                               )),
+                                        column(4,
+                                               wellPanel(
+                                                 h3("Download Database Records"),
+                                                 hr(),
+                                                 downloadButton(outputId = "settings.DL.all_records", label = "All Records"),
+                                                 downloadButton(outputId = "settings.DL.expenses", label = "Expenses"),
+                                                 downloadButton(outputId = "settings.DL.deposits", label = "Deposits")
+                                               ),
+                                               wellPanel(
+                                                 h3("Upload to Database Records"),
+                                                 hr(),
+                                                 p("Download the template below to format your data to upload"),
+                                                 downloadButton(outputId = "settings.DL.upload_template", label = "Template"),
+                                                 hr(),
+                                                 fileInput("settings.upload.new_records", label = "Upload (from template)", multiple = FALSE),
+                                                 textOutput("settings.upload.new_records_status")
+                                               ))
+                               )
+                   ), theme = ui_theme()
+        )
       })
     } else {
       # Login Page --------------------------------------------------------------
       
       output$App_Panel <- renderUI({
         fluidPage(theme = NULL,
-          fluidRow(
-            hr(),
-            titlePanel(title = "Expense Tracker"), align = "center"
-          ),
-          fluidRow(
-            column(4, offset = 4,
-                   wellPanel(
-                     h2("Login", align = "center"),
-                     textInput(inputId = "username", label = "Username"),
-                     passwordInput(inputId = "password", label = "Password"),
-                     fluidRow(
-                       column(4, offset = 4, actionButton(inputId = "login", label = "Login", width = "100%")),
-                       column(4, offset = 4, actionLink(inputId = "create_login", label = "Create login", align = "center")),
-                       column(6, offset = 3, uiOutput(outputId = "login_status")
-                       )
-                     )
-                   )
-            )
-          )
+                  fluidRow(
+                    hr(),
+                    titlePanel(title = "Expense Tracker"), align = "center"
+                  ),
+                  fluidRow(
+                    column(4, offset = 4,
+                           wellPanel(
+                             h2("Login", align = "center"),
+                             textInput(inputId = "username", label = "Username"),
+                             passwordInput(inputId = "password", label = "Password"),
+                             fluidRow(
+                               column(4, offset = 4, actionButton(inputId = "login", label = "Login", width = "100%")),
+                               column(4, offset = 4, actionLink(inputId = "create_login", label = "Create login", align = "center")),
+                               column(6, offset = 3, uiOutput(outputId = "login_status")
+                               )
+                             )
+                           )
+                    )
+                  )
         )
       })
     }
@@ -707,7 +736,7 @@ shinyServer(function(input, output, session) {
     if(user.net_cash() < 0){ # If user has no positive net cash, the weekly cash going forward is 0
       return(0)
     }
-
+    
     if(user.weeks_remaining() > 1){
       return(user.net_cash() / as.numeric(user.weeks_remaining()))
     } else {
@@ -721,22 +750,22 @@ shinyServer(function(input, output, session) {
   # Sidebar
   output$user.net_cash <- reactive({
     paste(user.base_currency(), round(user.net_cash(),2))
-    })
+  })
   output$user.weeks_remaining <- reactive({user.weeks_remaining()})
   output$user.weekly_net_cash <- reactive({
     paste(user.base_currency(), round(user.weekly_net_cash(),2))
-    })
+  })
   output$user.weekly_net_fx <- reactive({
     paste(user.fx_currency(), round(user.weekly_net_fx(),2))
-    })
+  })
   output$user.cycle_start <- renderText({
     validate(need(!is.null(cycle_start()), message = "Add Cycle Dates in Settings"))
     as.character(as_date(cycle_start()))
-    })
+  })
   output$user.cycle_end <- renderText({
     validate(need(!is.null(cycle_end()), message = "Add Cycle Dates in Settings"))
     as.character(as_date(cycle_end()))
-    })
+  })
   
   # Main Panel
   data.expense_table <- reactive({
@@ -744,7 +773,7 @@ shinyServer(function(input, output, session) {
     validate(
       need(!is.null(cycle_start()), "Add Cycle Dates in Settings"),
       need(!is.null(cycle_end()), "Add Cycle Dates in Settings"),
-      need(nrow(DB_get_expense(user())) > 0, "No Expenses Recorded")
+      need(nrow(DB_get_expense(user())) > 1, "Need 2 or more expenses to analyze")
     )
     input$expense_entry.add
     summarise_expenses(start_date = cycle_start(), end_date = cycle_end(), expense_tbl = DB_get_expense(user()))
@@ -816,16 +845,16 @@ shinyServer(function(input, output, session) {
     converted_amt <- conversion_factor * input$expense_modify.amount
     
     DB_modify_record(usr = input$username, 
-                   id = exp_tbl()[input$expense.history_table_row_last_clicked,"id"], 
-                   dt = input$expense_modify.date, 
-                   clss = "Expense",
-                   amt = input$expense_modify.amount, 
-                   curr = input$expense_modify.currency, 
-                   cnv_amt = converted_amt, 
-                   cnv_curr = "USD", 
-                   rate = conversion_factor, 
-                   ctgry = input$expense_modify.category, 
-                   cmnts = input$expense_modify.comment)
+                     id = exp_tbl()[input$expense.history_table_row_last_clicked,"id"], 
+                     dt = input$expense_modify.date, 
+                     clss = "Expense",
+                     amt = input$expense_modify.amount, 
+                     curr = input$expense_modify.currency, 
+                     cnv_amt = converted_amt, 
+                     cnv_curr = "USD", 
+                     rate = conversion_factor, 
+                     ctgry = input$expense_modify.category, 
+                     cmnts = input$expense_modify.comment)
     
     return("Expense Updated ")
   })
@@ -837,7 +866,7 @@ shinyServer(function(input, output, session) {
       formatRound(c("amount", "conv_amount"), digits = 2) %>%
       formatRound("fx_rate", digits = 4) %>%
       formatCurrency("conv_amount")
-    })
+  })
   output$expense.history_table_selected <- renderDataTable({
     datatable(exp_tbl_selected(), rownames = FALSE, 
               options=list(columnDefs = list(list(visible=FALSE, targets= c(0,2))),
@@ -893,15 +922,15 @@ shinyServer(function(input, output, session) {
     )
     
     DB_modify_record(usr = input$username, 
-                   id = sav_tbl()[input$savings.history_table_row_last_clicked, "id"],  
-                   dt = input$savings_modify.date, 
-                   clss = "Deposit",
-                   amt = input$savings_modify.amount, 
-                   curr = "USD", 
-                   cnv_amt = input$savings_modify.amount, 
-                   cnv_curr = "USD", rate = 1, 
-                   ctgry = input$savings_modify.category, 
-                   cmnts = input$savings_modify.comment)
+                     id = sav_tbl()[input$savings.history_table_row_last_clicked, "id"],  
+                     dt = input$savings_modify.date, 
+                     clss = "Deposit",
+                     amt = input$savings_modify.amount, 
+                     curr = "USD", 
+                     cnv_amt = input$savings_modify.amount, 
+                     cnv_curr = "USD", rate = 1, 
+                     ctgry = input$savings_modify.category, 
+                     cmnts = input$savings_modify.comment)
     
     return("Deposit Updated")
   })
@@ -912,7 +941,7 @@ shinyServer(function(input, output, session) {
       formatRound(c("amount", "conv_amount"), digits = 2) %>%
       formatRound("fx_rate", digits = 4) %>%
       formatCurrency("conv_amount")
-    })
+  })
   output$savings.history_table_selected <- renderDataTable({
     datatable(sav_tbl_selected(), rownames = FALSE, 
               options=list(columnDefs = list(list(visible=FALSE, targets= c(0,2) )))) %>% 
@@ -935,23 +964,23 @@ shinyServer(function(input, output, session) {
     paste("Current Categories:", paste(user.categories(), collapse = ", "))
   })
   output$settings.DL.all_records <- downloadHandler(    filename = function() {
-      paste(user(),"all_records.csv", sep = "_")},    content = function(file) {
+    paste(user(),"all_records.csv", sep = "_")},    content = function(file) {
       write.csv(x = DB_get_records(usr = user()), file, row.names = FALSE)})
   output$settings.DL.expenses <- downloadHandler(    filename = function() {
-      paste(user(),"expenses.csv", sep = "_")},    content = function(file) {
+    paste(user(),"expenses.csv", sep = "_")},    content = function(file) {
       write.csv(x = DB_get_expense(usr = user()), file, row.names = FALSE)})
   output$settings.DL.deposits <- downloadHandler(    filename = function() {
-      paste(user(),"deposits.csv", sep = "_")},    content = function(file) {
+    paste(user(),"deposits.csv", sep = "_")},    content = function(file) {
       write.csv(x = DB_get_deposit(usr = user()), file, row.names = FALSE)})
   output$settings.DL.upload_template <- downloadHandler(filename = "template.csv", content = function(file){
-      df <- data.frame(date = "Date in the format of YYYY-MM-DD",
-                       class = "transaction is Expense or Deposit",
-                       amount = "A numeric",
-                       currency = "Currently only USD and EUR are supported",
-                       category = "Describe the transaction in one word (food, drinks, transit, etc.)",
-                       comments = "Delete this row before uploading.")
-      write.csv(x = df, file, row.names = FALSE)
-    })
+    df <- data.frame(date = "Date in the format of YYYY-MM-DD",
+                     class = "transaction is Expense or Deposit",
+                     amount = "A numeric",
+                     currency = "Currently only USD and EUR are supported",
+                     category = "Describe the transaction in one word (food, drinks, transit, etc.)",
+                     comments = "Delete this row before uploading.")
+    write.csv(x = df, file, row.names = FALSE)
+  })
   
   new_transactions <- reactive({
     inFile <- input$settings.upload.new_records
@@ -990,7 +1019,7 @@ shinyServer(function(input, output, session) {
     # Format existing columns
     df$date <- as_date(df$date)
     df$amount <- as.numeric(df$amount)
-
+    
     # Initialize necessary DB columns
     df$conv_amount <- df$amount             # Assume that Converted Amount = Original Amount
     df$fx_rate <- 1                         # Set all fx rates to 1
@@ -1020,7 +1049,7 @@ shinyServer(function(input, output, session) {
   
   # Modals ------------------------------------------------------------------
   modal.expense_entry <- reactive({
-    modalDialog(title = "Add Expense", size = "l", easyClose = F, footer = actionButton("ee.dm",label = "Dismiss"),
+    modalDialog(title = "Add Expense", size = "l", easyClose = F, #footer = actionButton("ee.dm",label = "Dismiss"),
                 fluidPage(
                   fluidRow(
                     column(5, selectInput(inputId = "expense_entry.currency", label = "Currency",

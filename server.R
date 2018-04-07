@@ -1,7 +1,6 @@
 
 library(shiny)
-#library(DBI)
-library(RMySQL)
+library(DBI)
 library(data.table)
 library(DT)
 library(dplyr)
@@ -16,32 +15,11 @@ library(ggthemes)
 
 # Database ----------------------------------------------------------------
 
-DB_NAME <- "data"
-
+DB_NAME <- "data.sqlite"
 TBL_USER_DATA <- "users"
 
-DB_get_connection <- function(){
-  dbConnect(MySQL(), 
-            user= DB_USR, 
-            password=DB_PW, 
-            dbname=DB_NAME, 
-            host=DB_HOST, 
-            port = 3306)
-}
-DB_kill_connections <- function () {
-  
-  all_cons <- dbListConnections(MySQL())
-  
-  print(all_cons)
-  
-  for(con in all_cons)
-    +  dbDisconnect(con)
-  
-  print(paste(length(all_cons), " connections killed."))
-  
-}
 DB_test_connect <- function(){
-  db <- DB_get_connection()#; 
+  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
   
   print("#######################")
   print("- Connected to Database")
@@ -56,8 +34,7 @@ DB_test_connect <- function(){
                      cycle_start_date = as_date(character()),
                      theme = character(),
                      stringsAsFactors = FALSE)
-    
-    dbWriteTable(db, TBL_USER_DATA, df, row.names = FALSE)
+    dbWriteTable(db, TBL_USER_DATA, df)
   } 
   
   print("- Table exists.")
@@ -67,33 +44,32 @@ DB_test_connect <- function(){
 }
 
 DB_upload_df <- function(df, tblname){
-  db <- DB_get_connection(); 
+  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
   
-  current_df <- dbReadTable(db, tblname, row.names = FALSE) # Retrieve the current DB
-  
+  current_df <- dbReadTable(db, tblname) # Retrieve the current DB
+
   # Create IDs for new transactions
   if(nrow(current_df) == 0){
     df$id <- 1:nrow(df)
   } else {
-    df$id <- max(current_df$id):(max(current_df$id) + nrow(df) - 1)
+    df$id <- max(current_df$id):(max(current_df$id) + nrow(df))
   }
-  print(sort(colnames(current_df)))
-  print(sort(colnames(df)))
+  
   df <- df[,colnames(current_df)]
   
   print("### Data To Be Added ###")
   print(df)
   
-  dbWriteTable(db, tblname, df, append = TRUE, row.names = FALSE)
+  dbWriteTable(db, tblname, df, append = TRUE)
   
   print("- Data Added")
   dbDisconnect(db)
 }
 
 DB_get_user <- function(user){
-  db <- DB_get_connection(); 
+  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
   
-  users_data <- dbReadTable(conn = db,name =  TBL_USER_DATA, row.names = NULL)
+  users_data <- dbReadTable(db, TBL_USER_DATA)
   
   users_data <- filter(users_data, USER == user)
   
@@ -102,9 +78,9 @@ DB_get_user <- function(user){
   return(users_data)
 }
 DB_add_user <- function(usr, hsh){
-  db <- DB_get_connection(); 
+  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
   
-  df <- dbReadTable(db, TBL_USER_DATA, row.names=NULL)
+  df <- dbReadTable(db, TBL_USER_DATA)
   
   q <- paste("INSERT INTO", TBL_USER_DATA, "(ID, USER, HASH) VALUES (", paste("", nrow(df), ",", usr, ",", hsh, "", sep="'"), ")")
   
@@ -122,17 +98,17 @@ DB_add_user <- function(usr, hsh){
                                    fx_rate = as.numeric(character()),     # FX rate on date
                                    category = character(),                # Category
                                    comments = character()                 # Comments on Expense
-  ), row.names= FALSE)
+  ))
   
   suppressWarnings({dbDisconnect(db)})
   
 }
 
 DB_remove_records <- function(usr, ids){
-  db <- DB_get_connection(); 
+  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
   
   if(usr %in% dbListTables(db)){
-    df <- dbReadTable(db, usr, row.names = NULL)
+    df <- dbReadTable(db, usr)
     q <- paste("DELETE FROM", usr, "WHERE id IN", paste0("(", paste(ids, collapse = ","), ")") )
     print(paste("- Query:", q))
   
@@ -146,19 +122,14 @@ DB_remove_records <- function(usr, ids){
 }
 
 DB_add_record <- function(usr, dt, clss, amt, curr, cnv_amt, cnv_curr, rate, ctgry, cmnts){
-  db <- DB_get_connection(); 
+  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
   
   if(usr %in% dbListTables(db)){
-    df <- dbReadTable(db, usr, row.names = NULL)
-    # if(nrow(df) == 0){
-    #   id <- 1
-    # } else {
-    #   id <- max(df$id) + 1
-    # }
+    df <- dbReadTable(db, usr)
     id <- max(max(df$id), 0) + 1 #id is one larger than the max of either the largest existing id and 0.
               
     q <- paste("INSERT INTO", usr, "(id, date, class, amount, currency, conv_amount, conv_currency, fx_rate, category, comments)",
-               "VALUES (", paste("", id, ",",
+               "VALUES (", paste("", max(df$id)+1, ",",
                                  dt, ",",
                                  clss, ",",
                                  amt, ",",
@@ -185,7 +156,7 @@ DB_add_deposit <- function(usr, dt, amt, curr, cnv_amt, cnv_curr, rate, ctgry, c
 }
 
 DB_modify_record <- function(usr, id, dt, clss, amt, curr, cnv_amt, cnv_curr, rate, ctgry, cmnts){
-  db <- DB_get_connection(); 
+  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
   
   if(usr %in% dbListTables(db)){
     
@@ -212,12 +183,12 @@ DB_modify_record <- function(usr, id, dt, clss, amt, curr, cnv_amt, cnv_curr, ra
 }
 
 DB_get_records <- function(usr, clss = NULL, ID = NULL, ctgry = NULL){
-  db <- DB_get_connection(); 
+  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
   
   df <- NULL
   
   if(usr %in% dbListTables(db)){
-    df <- dbReadTable(db, usr, row.names = NULL)
+    df <- dbReadTable(db, usr)
     
     if(!is.null(clss)){
       df <- filter(df, class %in% clss)
@@ -246,9 +217,9 @@ DB_get_expense <- function(usr){
 }
 
 DB_update_user_field <- function(usr, hsh, field, value){
-  db <- DB_get_connection(); 
+  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
   
-  df <- dbReadTable(db, TBL_USER_DATA, row.names = FALSE)
+  df <- dbReadTable(db, TBL_USER_DATA)
   
   print(paste("- Attempting to update user field:", field, "with value:", value))
 
@@ -266,9 +237,9 @@ DB_update_user_field <- function(usr, hsh, field, value){
   dbDisconnect(db)
 }
 DB_get_user_field <- function(usr, hsh, field){
-  db <- DB_get_connection(); 
+  db <- dbConnect(RSQLite::SQLite(), DB_NAME)
   
-  df <- dbReadTable(db, TBL_USER_DATA, row.names = FALSE)
+  df <- dbReadTable(db, TBL_USER_DATA)
   
   df <- filter(df, (USER == usr && hsh == HASH))
   
@@ -773,7 +744,7 @@ shinyServer(function(input, output, session) {
     validate(
       need(!is.null(cycle_start()), "Add Cycle Dates in Settings"),
       need(!is.null(cycle_end()), "Add Cycle Dates in Settings"),
-      need(nrow(DB_get_expense(user())) > 1, "Need 2 or more expenses to analyze")
+      need(nrow(DB_get_expense(user())) > 0, "No Expenses Recorded")
     )
     input$expense_entry.add
     summarise_expenses(start_date = cycle_start(), end_date = cycle_end(), expense_tbl = DB_get_expense(user()))
@@ -1049,7 +1020,7 @@ shinyServer(function(input, output, session) {
   
   # Modals ------------------------------------------------------------------
   modal.expense_entry <- reactive({
-    modalDialog(title = "Add Expense", size = "l", easyClose = F, #footer = actionButton("ee.dm",label = "Dismiss"),
+    modalDialog(title = "Add Expense", size = "l", easyClose = F, footer = actionButton("ee.dm",label = "Dismiss"),
                 fluidPage(
                   fluidRow(
                     column(5, selectInput(inputId = "expense_entry.currency", label = "Currency",

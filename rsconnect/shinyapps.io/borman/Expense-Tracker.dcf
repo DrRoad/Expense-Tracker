@@ -1,0 +1,13 @@
+name: Expense-Tracker
+title: Expense-Tracker
+username:
+account: borman
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 314311
+bundleId: 1307931
+url: https://borman.shinyapps.io/Expense-Tracker/
+when: 1523144545.6526
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: .gitattributes|.RData|data.sqlite|README.md
